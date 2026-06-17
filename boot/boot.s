@@ -87,27 +87,12 @@ data_handler:
 
 /*
  * irq_handler_asm - обработчик IRQ exception
- *
- * При входе сюда CPU уже переключился в IRQ mode.
- * lr (link register) в IRQ mode = адрес возврата + 4 (нужно скорректировать).
- *
- * Сохраняем контекст, переходим в gic_dispatch_irq() (C функция),
- * восстанавливаем контекст, возвращаемся через subs pc, lr, #4.
  */
 irq_handler_asm:
-    // Корректируем lr для возврата (IRQ: lr = адрес_прерванной_инструкции + 4)
     sub lr, lr, #4
-
-    // Сохраняем регистры r0-r12 и lr в стек IRQ mode
     push {r0-r12, lr}
-
-    // Вызываем C-диспетчер
     bl gic_dispatch_irq
-
-    // Восстанавливаем регистры
     pop {r0-r12, lr}
-
-    // Возврат из прерывания: восстанавливает CPSR из SPSR и переходит по lr
     subs pc, lr, #0
 
 fiq_handler:

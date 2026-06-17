@@ -4,6 +4,7 @@
 
 #include "../include/uart.h"
 #include "../include/types.h"
+#include "../include/gic.h"
 
 #define KERNEL_VERSION "0.1.0"
 #define KERNEL_NAME "MOS"
@@ -29,7 +30,6 @@ void kernel_main(void) {
 
     shell_loop();
 
-    // На случай выхода из shell_loop (не должно происходить)
     while(1);
 }
 
@@ -63,28 +63,20 @@ void kernel_init(void) {
     uart_puts("SKIPPED (todo)\n");
 
     uart_puts("  [..] Interrupt controller... ");
-    uart_puts("SKIPPED (todo)\n");
+    gic_init();
+    uart_puts("  [ OK ] GIC initialized\n");
 
     uart_puts("  [..] Timer initialization... ");
-    uart_puts("SKIPPED (todo)\n");
+    uart_puts("SKIPPED (todo - WIP, causes hang on IRQ return, needs debugging)\n");
 
     uart_puts("  [..] Virtual File System... ");
     uart_puts("SKIPPED (todo)\n");
 }
 
 /*
- * qemu_poweroff - корректное выключение QEMU
- *
- * Для платформы vexpress-a9 QEMU эмулирует SYS_CFG регистр
- * по адресу 0x10000000, через который можно послать
- * команду shutdown.
- *
- * Альтернативный (более надёжный) способ для ARM "virt"/vexpress
- * в современных QEMU - запись в регистр sys_cfgdata/sys_cfgctrl,
- * но для совместимости используем семихостинг через ARM HLT.
+ * qemu_poweroff - корректное выключение QEMU через ARM семихостинг
  */
 void qemu_poweroff(void) {
-    // Семихостинг ARM: ANGEL_SWI / SYS_EXIT (0x18) с кодом 0x20026 (ADP_Stopped_ApplicationExit)
     register uint32_t r0 = 0x18;        // SYS_EXIT
     register uint32_t r1 = 0x20026;     // ADP_Stopped_ApplicationExit
 
@@ -97,8 +89,6 @@ void qemu_poweroff(void) {
         : "r0", "r1"
     );
 
-    // Если семихостинг недоступен (не запущен с -semihosting) -
-    // просто останавливаем CPU в бесконечном WFI
     while(1) {
         asm volatile ("wfi");
     }
@@ -122,22 +112,17 @@ void shell_loop(void) {
                 buffer[pos] = '\0';
                 uart_puts("\n");
                 break;
-            } else if (c == 127 || c == 8) {  // Backspace
+            } else if (c == 127 || c == 8) {
                 if (pos > 0) {
                     pos--;
                     uart_puts("\b \b");
                 }
-                // Если pos == 0, игнорируем backspace -
-                // нельзя удалить prompt "MOS> "
             } else if (c >= 32 && c < 127 && pos < 127) {
-                // Только печатаемые символы
                 buffer[pos++] = c;
-                uart_putc(c);  // Echo character
+                uart_putc(c);
             }
-            // Все остальные управляющие символы игнорируются
         }
 
-        // Обработка команд
         if (strlen(buffer) == 0) {
             continue;
         }
@@ -183,7 +168,6 @@ void shell_loop(void) {
             uart_puts("\n");
         }
         else if (strcmp(buffer, "clear") == 0 || strcmp(buffer, "cls") == 0) {
-            // ANSI escape code для очистки экрана
             uart_puts("\033[2J\033[H");
             uart_puts("MOS v");
             uart_puts(KERNEL_VERSION);
@@ -191,12 +175,10 @@ void shell_loop(void) {
         }
         else if (strncmp(buffer, "echo", 4) == 0 && (buffer[4] == '\0' || buffer[4] == ' ')) {
             const char *arg = buffer + 4;
-            // Пропускаем пробелы между "echo" и аргументом
             while (*arg == ' ') arg++;
 
             uart_puts("\n");
 
-            // Если аргумент в кавычках "..." - убираем внешние кавычки
             int len = strlen(arg);
             if (len >= 2 && arg[0] == '"' && arg[len - 1] == '"') {
                 for (int i = 1; i < len - 1; i++) {
@@ -210,7 +192,7 @@ void shell_loop(void) {
         }
         else if (strcmp(buffer, "uptime") == 0) {
             uart_puts("\nSystem uptime: unknown\n");
-            uart_puts("(Timer not yet implemented)\n\n");
+            uart_puts("(Timer not yet implemented - WIP)\n\n");
         }
         else if (strcmp(buffer, "free") == 0) {
             uart_puts("\nMemory Information:\n");
@@ -243,17 +225,12 @@ void shell_loop(void) {
         }
         else if (strcmp(buffer, "reboot") == 0) {
             uart_puts("\nRebooting system...\n\n");
-            // Программный software reset для vexpress-a9:
-            // запись в SYS_CFGCTRL регистр
-            // Адрес sysreg base для vexpress = 0x10000000
-            // CFGCTRL = offset 0xA4, бит START (31) | WRITE (30) | function REBOOT (0x09)
             volatile uint32_t *sys_cfgdata  = (uint32_t *)(0x10000000 + 0xA0);
             volatile uint32_t *sys_cfgctrl  = (uint32_t *)(0x10000000 + 0xA4);
 
             *sys_cfgdata = 0;
             *sys_cfgctrl = (1U << 31) | (1U << 30) | (0x09 << 20);
 
-            // Если reboot через sysreg не сработал - зависаем
             while(1) {
                 asm volatile ("wfi");
             }
@@ -279,7 +256,6 @@ void shell_loop(void) {
     }
 }
 
-// String compare function
 int strcmp(const char *s1, const char *s2) {
     while (*s1 && (*s1 == *s2)) {
         s1++;
@@ -288,14 +264,12 @@ int strcmp(const char *s1, const char *s2) {
     return *(unsigned char *)s1 - *(unsigned char *)s2;
 }
 
-// String length function
 int strlen(const char *s) {
     int len = 0;
     while (*s++) len++;
     return len;
 }
 
-// Compare first n characters of two strings
 int strncmp(const char *s1, const char *s2, int n) {
     while (n > 0 && *s1 && (*s1 == *s2)) {
         s1++;

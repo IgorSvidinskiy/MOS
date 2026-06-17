@@ -8,11 +8,11 @@ OBJCOPY = $(CROSS)objcopy
 OBJDUMP = $(CROSS)objdump
 
 CFLAGS = -Wall -Wextra -O2 -nostdlib -nostartfiles -ffreestanding
-CFLAGS += -mcpu=cortex-a9 -marm
+CFLAGS += -mcpu=cortex-a9
 CFLAGS += -fno-builtin -fno-common
 CFLAGS += -I./include
 
-ASFLAGS = 
+ASFLAGS = -mcpu=cortex-a9
 
 LDFLAGS = -T linker.ld -nostdlib
 
@@ -21,7 +21,7 @@ BOOT_DIR = boot
 KERNEL_DIR = kernel
 
 ASM_SOURCES = $(BOOT_DIR)/boot.s
-C_SOURCES = $(KERNEL_DIR)/main.c $(KERNEL_DIR)/uart.c
+C_SOURCES = $(KERNEL_DIR)/main.c $(KERNEL_DIR)/uart.c $(KERNEL_DIR)/gic.c
 
 ASM_OBJECTS = $(patsubst $(BOOT_DIR)/%.s, $(BUILD_DIR)/%.o, $(ASM_SOURCES))
 C_OBJECTS = $(patsubst $(KERNEL_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES))
@@ -70,11 +70,6 @@ run: $(KERNEL_ELF)
 	@echo "$(COLOR_YELLOW)Press Ctrl+A then X to exit QEMU$(COLOR_RESET)"
 	@echo ""
 	qemu-system-arm -M vexpress-a9 -m 512M -nographic -kernel $(KERNEL_ELF) -semihosting
-
-.PHONY: run-gui
-run-gui: $(KERNEL_ELF)
-	@echo "$(COLOR_GREEN)Starting QEMU with display...$(COLOR_RESET)"
-	qemu-system-arm -M vexpress-a9 -m 512M -kernel $(KERNEL_ELF) -serial stdio
 
 .PHONY: debug
 debug: $(KERNEL_ELF)
